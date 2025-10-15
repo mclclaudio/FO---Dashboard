@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📊 FO Dashboard v6.2</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<style>
+  body {
+    font-family: 'Segoe UI', sans-serif;
+    background: #f7f9fb;
+    color: #222;
+    margin: 0;
+    padding: 0;
+  }
+  header {
+    background: #fff;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    padding: 15px 25px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  h1 { margin: 0; font-size: 1.4rem; }
+  .filters {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    padding: 15px 25px; background: #fff;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+  }
+  .filters select, .filters input, .filters button {
+    padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 0.9rem;
+  }
+  .filters button {
+    background: #007bff; color: #fff; cursor: pointer;
+  }
+  .filters button:hover { background: #0056b3; }
+  .cards {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 15px; padding: 20px;
+  }
+  .card {
+    background: #fff; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.08);
+    padding: 15px; text-align: center;
+  }
+  canvas { width: 100% !important; height: 300px !important; }
+  #overlay {
+    position: fixed; top:0; left:0; width:100%; height:100%;
+    background: rgba(255,255,255,0.8);
+    display:flex; justify-content:center; align-items:center;
+    z-index:1000;
+  }
+  .spinner {
+    border: 6px solid #ddd;
+    border-top: 6px solid #007bff;
+    border-radius: 50%; width: 50px; height: 50px;
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin { 100% { transform: rotate(360deg); } }
+  .top-list {
+    list-style: none; padding: 0; margin: 0; text-align: left;
+  }
+  .top-list li {
+    display: flex; justify-content: space-between;
+    padding: 6px 4px; border-bottom: 1px solid #f0f0f0;
+    font-size: 0.9rem;
+  }
+  .top-list li span {
+    font-weight: bold; background-color: #e9ecef;
+    padding: 2px 6px; border-radius: 5px;
+  }
+  .large-cards-container {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 15px; padding: 0 20px 20px 20px;
+  }
+  .metrics-container { text-align: left; margin-top: 15px; }
+  .metric-item {
+    display: flex; justify-content: space-between;
+    align-items: center; font-size: 0.9rem;
+    padding: 8px 5px; border-bottom: 1px solid #eee;
+  }
+  .metric-item:last-child { border-bottom: none; }
+  .metric-item strong { font-size: 1.1rem; color: #007bff; }
+  .tratativas-divider {
+    font-size: 0.8rem; font-weight: bold; color: #888;
+    text-align: center; padding: 10px 0 5px 0;
+    border-bottom: 1px solid #eee; margin-bottom: 5px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📊 FO Dashboard v6.2</h1>
+</header>
+
+<div class="filters">
+  <input type="date" id="dataInicio">
+  <input type="date" id="dataFim">
+  <select id="mesAno"></select>
+  <select id="ufFiltro"></select>
+  <button id="aplicar">Aplicar Filtros</button>
+  <button id="limpar">Limpar Filtros</button>
+</div>
+
+<div class="cards">
+  <div class="card">
+    <h3>Métricas Gerais</h3>
+    <div class="metrics-container">
+      <div class="metric-item"><span>Ocorrências:</span><strong id="totalOcorrencias">–</strong></div>
+      <div class="metric-item"><span>Clientes Únicos:</span><strong id="totalClientes">–</strong></div>
+      <div class="metric-item"><span>Produtos Únicos:</span><strong id="totalProdutos">–</strong></div>
+      <div class="tratativas-divider">TRATATIVAS</div>
+      <div class="metric-item"><span>Abatimento:</span><strong id="totalAbatimento">–</strong></div>
+      <div class="metric-item"><span>Bonificação:</span><strong id="totalBonificacao">–</strong></div>
+      <div class="metric-item"><span>Devolução:</span><strong id="totalDevolucao">–</strong></div>
+      <div class="metric-item"><span>Sem Retorno:</span><strong id="totalSemRetorno">–</strong></div>
+    </div>
+  </div>
+
+  <div class="card"><h3>Top 5 Produtos</h3><ol id="prodList" class="top-list"></ol></div>
+  <div class="card"><h3>Top 5 Regiões (UF)</h3><canvas id="regChart"></canvas></div>
+  <div class="card"><h3>Top 5 Clientes</h3><ol id="cliList" class="top-list"></ol></div>
+  <div class="card"><h3>Top 5 REPs</h3><ol id="repList" class="top-list"></ol></div>
+</div>
+
+<div class="large-cards-container">
+  <div class="card large-card"><h3>Distribuição de Tratativas</h3><canvas id="tratChart"></canvas></div>
+  <div class="card large-card"><h3>Tendência Temporal (Mensal)</h3><canvas id="trendChart"></canvas></div>
+</div>
+
+<div id="overlay"><div class="spinner"></div></div>
+
+<script>
+const urlCSV = "https://raw.githubusercontent.com/mclclaudio/FO---Dashboard/refs/heads/main/Base-Ocorr%C3%AAncias.csv" + "?nocache=" + new Date().getTime();
+
+let dataOriginal = [];
+let charts = {};
+const overlay = document.getElementById("overlay");
+
+function showOverlay(s){ overlay.style.display = s ? "flex" : "none"; }
+
+/* === Helpers de normalização === */
+const stripBOM = s => (s && s.charCodeAt(0)===0xFEFF ? s.slice(1) : s);
+const up = s => (s==null ? "" : String(s)).trim().toUpperCase();
+const norm = s => up(s).normalize("NFD").replace(/[\u0300-\u036f]/g, ""); // remove acentos
+const safe = s => (s==null ? "" : String(s)).trim();
+
+function parseDateBR(s){
+  const t = safe(s);
+  const m = t.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})$/);
+  if(!m) return null;
+  let d = +m[1], mo = +m[2]-1, y = +m[3];
+  if (y < 100) y += 2000;
+  const dt = new Date(y, mo, d);
+  return isNaN(dt) ? null : dt;
+}
+
+function monthKey(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+function monthLabel(mk){ const [y,m]=mk.split('-'); return `${m}/${y}`; }
+function toNumberMaybe(v){
+  if (v == null || v === "") return 0;
+  const t = String(v).replace(/\./g,"").replace(",","."); // "1.234,56" -> "1234.56"
+  const n = parseFloat(t);
+  return isNaN(n) ? 0 : n;
+}
+
+/* === Normaliza cabeçalhos e linhas === */
+function normalizeRows(rows){
+  if(!rows || !rows.length) return [];
+  // map cabeçalhos → maiúsculos e trim
+  const normalized = rows.map(r=>{
+    const nr = {};
+    Object.keys(r).forEach(k=>{
+      const nk = up(stripBOM(k));  // " Cod Seq " -> "COD SEQ"
+      nr[nk] = r[k];
+    });
+    // geração de COD SEQ se não existir
+    if (!nr["COD SEQ"]) {
+      const DATA = safe(nr["DATA"]);
+      const BP = safe(nr["BP"]);
+      if (DATA && BP) nr["COD SEQ"] = `${DATA.replace(/\D/g,"")}${BP}`;
+    }
+    return nr;
+  });
+  return normalized;
+}
+
+/* === Carrega CSV (forçando ; ) === */
+document.addEventListener('DOMContentLoaded', () => {
+  showOverlay(true);
+  Papa.parse(urlCSV, {
+    download: true,
+    header: true,
+    skipEmptyLines: true,
+    delimiter: ";",               // << força ; para Excel
+    transformHeader: h => up(stripBOM(h)), // normaliza cabeçalho na origem
+    complete: res => {
+      dataOriginal = normalizeRows(res.data);
+      initFilters();
+      atualizarDashboard();
+    },
+    error: err => {
+      console.error("Erro ao baixar ou processar o CSV:", err);
+      showOverlay(false);
+      alert("Não foi possível carregar os dados do dashboard. Verifique o console para mais detalhes.");
+    }
+  });
+});
+
+function initFilters(){
+  const ufFiltro = document.getElementById("ufFiltro");
+  ufFiltro.innerHTML = "<option value=''>Todos UF</option>";
+  const ufs = [...new Set(dataOriginal.map(r => up(r["UF"])).filter(Boolean))].sort();
+  ufs.forEach(uf => ufFiltro.innerHTML += `<option value="${uf}">${uf}</option>`);
+
+  const mesAnoSel = document.getElementById("mesAno");
+  mesAnoSel.innerHTML = "<option value=''>Todos Meses</option>";
+  const meses = new Set();
+  dataOriginal.forEach(r=>{
+    const dt = parseDateBR(r["DATA"]);
+    if (dt) meses.add(monthKey(dt));
+  });
+  [...meses].sort().reverse().forEach(mk=>{
+    mesAnoSel.innerHTML += `<option value="${mk}">${monthLabel(mk)}</option>`;
+  });
+}
+
+document.getElementById("aplicar").addEventListener("click", atualizarDashboard);
+
+document.getElementById("limpar").addEventListener("click", ()=>{
+  document.getElementById("dataInicio").value = "";
+  document.getElementById("dataFim").value = "";
+  document.getElementById("mesAno").value = "";
+  document.getElementById("ufFiltro").value = "";
+  atualizarDashboard();
+});
+
+function atualizarDashboard(){
+  showOverlay(true);
+  setTimeout(()=>{
+    // 1) Filtros
+    const inicio = document.getElementById("dataInicio").value;
+    const fim    = document.getElementById("dataFim").value;
+    const mesAno = document.getElementById("mesAno").value; // YYYY-MM
+    const uf     = document.getElementById("ufFiltro").value; // UF normalizado (UPPER)
+
+    let data = dataOriginal.filter(r => parseDateBR(r["DATA"]));
+    data = data.filter(r=>{
+      const dt = parseDateBR(r["DATA"]);
+      if (!dt) return false;
+      if (inicio && dt < new Date(inicio)) return false;
+      if (fim) {
+        const to = new Date(fim); to.setHours(23,59,59,999);
+        if (dt > to) return false;
+      }
+      if (mesAno && monthKey(dt) !== mesAno) return false;
+      if (uf && up(r["UF"]) !== uf) return false;
+      return true;
+    });
+
+    // 2) Deduplicação por COD SEQ
+    const uniq = new Map();
+    data.forEach(r=>{
+      const key = up(r["COD SEQ"]);
+      if (!key) return;     // se vier vazio, ignora
+      if (!uniq.has(key)) uniq.set(key, r);
+    });
+    const casos = [...uniq.values()];  // base para quase tudo
+
+    // 3) Métricas gerais (por casos únicos)
+    const totalOcorrencias = casos.length;
+    const totalClientes    = new Set(casos.map(r=> up(r["CLIENTE"])).filter(Boolean)).size;
+    const totalProdutos    = new Set(casos.map(r=> up(r["PRODUTO"])).filter(Boolean)).size;
+
+    const tratNorm = v => norm(v||""); // sem acento p/ comparar
+    const totalAbatimento = casos.filter(r => tratNorm(r["TRATATIVA"]) === "ABATIMENTO").length;
+    const totalBonificacao = casos.filter(r => tratNorm(r["TRATATIVA"]) === "BONIFICACAO").length;
+    const totalDevolucao   = casos.filter(r => tratNorm(r["TRATATIVA"]) === "DEVOLUCAO").length;
+    const totalSemRetorno  = casos.filter(r => tratNorm(r["TRATATIVA"]) === "SEM RETORNO").length;
+
+    // Atualiza Métricas
+    document.getElementById("totalOcorrencias").innerText = totalOcorrencias.toLocaleString('pt-BR');
+    document.getElementById("totalClientes").innerText    = totalClientes.toLocaleString('pt-BR');
+    document.getElementById("totalProdutos").innerText    = totalProdutos.toLocaleString('pt-BR');
+    document.getElementById("totalAbatimento").innerText  = totalAbatimento.toLocaleString('pt-BR');
+    document.getElementById("totalBonificacao").innerText = totalBonificacao.toLocaleString('pt-BR');
+    document.getElementById("totalDevolucao").innerText   = totalDevolucao.toLocaleString('pt-BR');
+    document.getElementById("totalSemRetorno").innerText  = totalSemRetorno.toLocaleString('pt-BR');
+
+    // 4) Top Produtos (SOMA de QTD na base FILTRADA ORIGINAL — não deduplicada)
+    const topProdutos = contarTopSomaQTD(data, "PRODUTO", "QTD", 5);
+    atualizarLista("prodList", topProdutos);
+
+    // 5) Tops por casos únicos (UF, CLIENTE, REP), Tratativas e Tendência (com base em CASOS)
+    atualizarLista("cliList", contarTop(casos, "CLIENTE"));
+    atualizarLista("repList", contarTop(casos, "REP"));
+    atualizarGrafico("regChart",   contarTop(casos, "UF"),        "Top 5 Regiões");
+    atualizarGraficoPizza("tratChart", contarTop(casos, "TRATATIVA", 10), "Distribuição de Tratativas");
+    atualizarGraficoLinha("trendChart", tendenciaMensal(casos),   "Tendência Temporal");
+
+    showOverlay(false);
+  }, 120);
+}
+
+/* === Agregações === */
+function contarTop(data, campo, limite=5){
+  const cont = {};
+  data.forEach(r=>{
+    const k = up(r[campo]);
+    if (k) cont[k] = (cont[k]||0) + 1;
+  });
+  const sorted = Object.entries(cont).sort((a,b)=>b[1]-a[1]).slice(0,limite);
+  return { labels: sorted.map(e=>e[0]), values: sorted.map(e=>e[1]) };
+}
+
+function contarTopSomaQTD(data, campo, qtdCampo, limite=5){
+  const cont = {};
+  data.forEach(r=>{
+    const k = up(r[campo]);
+    const q = toNumberMaybe(r[qtdCampo]);
+    if (k) cont[k] = (cont[k]||0) + q;
+  });
+  const sorted = Object.entries(cont).sort((a,b)=>b[1]-a[1]).slice(0,limite);
+  return { labels: sorted.map(e=>e[0]), values: sorted.map(e=>e[1]) };
+}
+
+function tendenciaMensal(data){
+  const cont = {};
+  data.forEach(r=>{
+    const dt = parseDateBR(r["DATA"]); if(!dt) return;
+    const k = monthKey(dt);
+    cont[k] = (cont[k]||0) + 1;
+  });
+  const arr = Object.entries(cont).sort((a,b)=>a[0].localeCompare(b[0]));
+  return { labels: arr.map(e=>monthLabel(e[0])), values: arr.map(e=>e[1]) };
+}
+
+/* === UI === */
+function atualizarLista(id, {labels, values}){
+  const el = document.getElementById(id);
+  el.innerHTML = "";
+  if(!labels.length){ el.innerHTML = "<li>Nenhum dado encontrado.</li>"; return; }
+  labels.forEach((lab,i)=>{
+    const li = document.createElement("li");
+    li.innerHTML = `${lab} <span>${(values[i] ?? 0).toLocaleString('pt-BR')}</span>`;
+    el.appendChild(li);
+  });
+}
+
+function atualizarGrafico(id, {labels, values}, label){
+  const ctx = document.getElementById(id).getContext("2d");
+  if(!charts[id]){
+    charts[id] = new Chart(ctx, {
+      type:"bar",
+      data:{ labels, datasets:[{ label, data:values, backgroundColor:"#007bff77" }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}} }
+    });
+  }else{
+    charts[id].data.labels = labels;
+    charts[id].data.datasets[0].data = values;
+    charts[id].update();
+  }
+}
+
+function atualizarGraficoPizza(id, {labels, values}, label){
+  const ctx = document.getElementById(id).getContext("2d");
+  if(!charts[id]){
+    charts[id] = new Chart(ctx, {
+      type:"pie",
+      data:{ labels, datasets:[{ label, data:values }] },
+      options:{ responsive:true, maintainAspectRatio:false }
+    });
+  }else{
+    charts[id].data.labels = labels;
+    charts[id].data.datasets[0].data = values;
+    charts[id].update();
+  }
+}
+
+function atualizarGraficoLinha(id, {labels, values}, label){
+  const ctx = document.getElementById(id).getContext("2d");
+  if(!charts[id]){
+    charts[id] = new Chart(ctx, {
+      type:"line",
+      data:{ labels, datasets:[{ label, data:values, borderColor:"#007bff", fill:false }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}} }
+    });
+  }else{
+    charts[id].data.labels = labels;
+    charts[id].data.datasets[0].data = values;
+    charts[id].update();
+  }
+}
+</script>
+</body>
+</html>
